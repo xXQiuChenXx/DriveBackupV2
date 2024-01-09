@@ -1,6 +1,6 @@
 # DriveBackupV2
 
-**Need help? Talk to me on [Discord](https://discord.gg/VdCAUtm)!**
+**This repo is modified by me for some changes. You may build this plugin with the command: ** `mvn clean install`
 
 ## What is this?
 Have you ever lost your Minecraft world before?
