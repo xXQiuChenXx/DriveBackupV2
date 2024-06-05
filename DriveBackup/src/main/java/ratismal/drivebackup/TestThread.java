@@ -1,22 +1,24 @@
 package ratismal.drivebackup;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.util.Random;
-
 import org.bukkit.command.CommandSender;
+import ratismal.drivebackup.UploadThread.UploadLogger;
+import ratismal.drivebackup.config.ConfigParser;
+import ratismal.drivebackup.config.ConfigParser.Config;
 
+import org.jetbrains.annotations.NotNull;
 import ratismal.drivebackup.uploaders.Uploader;
 import ratismal.drivebackup.uploaders.dropbox.DropboxUploader;
 import ratismal.drivebackup.uploaders.ftp.FTPUploader;
 import ratismal.drivebackup.uploaders.googledrive.GoogleDriveUploader;
 import ratismal.drivebackup.uploaders.onedrive.OneDriveUploader;
+import ratismal.drivebackup.uploaders.s3.S3Uploader;
 import ratismal.drivebackup.uploaders.webdav.NextcloudUploader;
 import ratismal.drivebackup.uploaders.webdav.WebDAVUploader;
-import ratismal.drivebackup.UploadThread.UploadLogger;
-import ratismal.drivebackup.config.ConfigParser;
-import ratismal.drivebackup.config.ConfigParser.Config;
 import ratismal.drivebackup.util.MessageUtil;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.util.Random;
 
 import static ratismal.drivebackup.config.Localization.intl;
 
@@ -61,8 +63,8 @@ public class TestThread implements Runnable {
         /**
          * Arguments:
          * 0) The backup method to test
-         * 1) The name of the test file to upload during the test
-         * 2) The size (in bytes) of the file
+         * 1) The name of the test file to upload during test
+         * 2) The size (in bytes) of the file.
          */
 
         if (args.length < 2) {
@@ -99,7 +101,7 @@ public class TestThread implements Runnable {
      * @param testFileSize the size (in bytes) of the file
      * @param method name of the upload method to test
      */
-    private void testUploadMethod(String testFileName, int testFileSize, String method) throws Exception {
+    private void testUploadMethod(String testFileName, int testFileSize, @NotNull String method) throws Exception {
         Config config = ConfigParser.getConfig();
         Uploader uploadMethod = null;
         
@@ -141,6 +143,14 @@ public class TestThread implements Runnable {
                     uploadMethod = new NextcloudUploader(logger, config.backupMethods.nextcloud);
                 } else {
                     sendMethodDisabled(logger, NextcloudUploader.UPLOADER_NAME);
+                    return;
+                }
+                break;
+            case "s3":
+                if (config.backupMethods.s3.enabled) {
+                    uploadMethod = new S3Uploader(logger, config.backupMethods.s3);
+                } else {
+                    sendMethodDisabled(logger, S3Uploader.UPLOADER_NAME);
                     return;
                 }
                 break;
@@ -194,7 +204,7 @@ public class TestThread implements Runnable {
         uploadMethod.close();
     }
 
-    private void sendMethodDisabled(UploadLogger logger, String methodName) {
+    private void sendMethodDisabled(@NotNull UploadLogger logger, String methodName) {
         logger.log(
             intl("test-method-not-enabled"), 
             "upload-method", methodName);
