@@ -40,6 +40,7 @@ import java.io.File;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -52,6 +53,8 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.TreeMap;
 
 import static ratismal.drivebackup.config.Localization.intl;
@@ -66,6 +69,7 @@ public class UploadThread implements Runnable {
     private CommandSender initiator;
     private final UploadLogger logger;
     private final FileUtil fileUtil;
+    private final Timer totalTimer;
 
     /**
      * The current status of the backup thread
@@ -80,7 +84,9 @@ public class UploadThread implements Runnable {
          * The backup thread is compressing the files to be backed up.
          */
         COMPRESSING,
-
+        
+        STARTING,
+        PRUNING,
         /**
          * The backup thread is uploading the files
          */
@@ -147,6 +153,7 @@ public class UploadThread implements Runnable {
             }
         };
         fileUtil = new FileUtil(logger);
+        totalTimer = new Timer();
     }
 
     /**
@@ -174,6 +181,7 @@ public class UploadThread implements Runnable {
             }
         };
         fileUtil = new FileUtil(logger);
+        totalTimer = new Timer();
     }
 
     /**
@@ -181,15 +189,17 @@ public class UploadThread implements Runnable {
      */
     @Override
     public void run() {
-        if (!locationsToBePruned.isEmpty()) {
-            locationsToBePruned.clear();
-        }
         Config config = ConfigParser.getConfig();
         if (initiator != null && backupStatus != BackupStatus.NOT_RUNNING) {
             logger.initiatorError(
                 intl("backup-already-running"), 
                 "backup-status", getBackupStatus());
             return;
+        }
+        totalTimer.start();
+        backupStatus = BackupStatus.STARTING;
+        if (!locationsToBePruned.isEmpty()) {
+            locationsToBePruned.clear();
         }
         if (initiator == null) {
             updateNextIntervalBackupTime();
@@ -203,7 +213,7 @@ public class UploadThread implements Runnable {
         }
         boolean errorOccurred = false;
         List<ExternalBackupSource> externalBackupList = Arrays.asList(config.externalBackups.sources);
-        backupList = new ArrayList<BackupListEntry>(Arrays.asList(config.backupList.list));
+        backupList = new ArrayList<>(Arrays.asList(config.backupList.list));
         if (externalBackupList.isEmpty() && backupList.isEmpty()) {
             logger.log(intl("backup-empty-list"));
             return;
@@ -262,7 +272,6 @@ public class UploadThread implements Runnable {
         uploadBackupFiles(uploaders);
         FileUtil.deleteFolder(new File("external-backups"));
         logger.log(intl("backup-upload-complete"));
-        backupStatus = BackupStatus.NOT_RUNNING;
         logger.log(intl("upload-error-check"));
         for (Uploader uploader : uploaders) {
             uploader.close();
@@ -288,7 +297,13 @@ public class UploadThread implements Runnable {
             PlayerListener.setAutoBackupsActive(false);
         }
         lastBackupSuccessful = !errorOccurred;
+        backupStatus = BackupStatus.PRUNING;
         pruneLocalBackups();
+        totalTimer.end();
+        long totalBackupTime = totalTimer.getTime();
+        long totalSeconds = Duration.of(totalBackupTime, ChronoUnit.MILLIS).getSeconds();
+        logger.log(intl("backup-total-time"), "time", String.valueOf(totalSeconds));
+        backupStatus = BackupStatus.NOT_RUNNING;
         if (errorOccurred) {
             DriveBackupApi.backupError();
         } else {
@@ -545,6 +560,12 @@ public class UploadThread implements Runnable {
             case UPLOADING:
                 message = intl("backup-status-uploading");
                 break;
+            case STARTING:
+                message = intl("backup-status-starting");
+                break;
+            case PRUNING:
+                message = intl("backup-status-pruning");
+                break;
             default:
                 return intl("backup-status-not-running");
         }
@@ -563,14 +584,11 @@ public class UploadThread implements Runnable {
     public static String getNextAutoBackup() {
         Config config = ConfigParser.getConfig();
         if (config.backupScheduling.enabled) {
-            long now = ZonedDateTime.now(config.advanced.dateTimezone).toEpochSecond();
-            ZonedDateTime nextBackupDate = Collections.min(Scheduler.getBackupDatesList(), new Comparator<ZonedDateTime>() {
-                public int compare(ZonedDateTime d1, ZonedDateTime d2) {
-                    long diff1 = Math.abs(d1.toEpochSecond() - now);
-                    long diff2 = Math.abs(d2.toEpochSecond() - now);
-                    return Long.compare(diff1, diff2);
-                }
-            });
+            ZonedDateTime now = ZonedDateTime.now(config.advanced.dateTimezone);
+            ZonedDateTime nextBackupDate = Scheduler.getBackupDatesList().stream()
+                .filter(zdt -> zdt.isAfter(now))
+                .min(Comparator.naturalOrder())
+                .orElseThrow(NoSuchElementException::new);
             DateTimeFormatter backupDateFormatter = DateTimeFormatter.ofPattern(intl("next-schedule-backup-format"), config.advanced.dateLanguage);
             return intl("next-schedule-backup").replaceAll("%DATE", nextBackupDate.format(backupDateFormatter));
         } else if (config.backupStorage.delay != -1) {
